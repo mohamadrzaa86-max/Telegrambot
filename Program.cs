@@ -23,10 +23,16 @@ app.MapPost("/webhook", async (HttpContext context) =>
         using var reader = new StreamReader(context.Request.Body);
         var body = await reader.ReadToEndAsync();
 
-        var update = JsonSerializer.Deserialize<Update>(body);
+        Console.WriteLine("RAW BODY: " + body);
+
+        var update = JsonSerializer.Deserialize<Update>(body, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
 
         if (update != null)
         {
+            Console.WriteLine("Parsed Message is null? " + (update.Message == null));
             await HandleUpdate(update);
         }
     }
