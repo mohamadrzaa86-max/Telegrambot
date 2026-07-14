@@ -16,9 +16,6 @@ var botClient = new TelegramBotClient(BotConfig.Token);
 var userRepo = new UserRepository();
 var movieRepo = new MovieRepository();
 
-// =======================
-// Webhook endpoint (تلگرام آپدیت‌ها رو اینجا می‌فرسته)
-// =======================
 app.MapPost("/webhook", async (HttpContext context) =>
 {
     try
@@ -41,10 +38,8 @@ app.MapPost("/webhook", async (HttpContext context) =>
     return Results.Ok();
 });
 
-// health check ساده (برای UptimeRobot هم استفاده می‌شه)
 app.MapGet("/", () => "Bot is running!");
 
-// تنظیم دستی وبهوک بعد از دیپلوی (یک‌بار کافیه صداش بزنی)
 app.MapGet("/set-webhook", async () =>
 {
     var webhookUrl = Environment.GetEnvironmentVariable("WEBHOOK_URL");
@@ -60,9 +55,6 @@ var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 app.Run($"http://0.0.0.0:{port}");
 
 
-// =======================
-// Update Handler (همون منطق قبلی، فقط بدون پارامتر گرفتن botClient)
-// =======================
 async Task HandleUpdate(Update update)
 {
     Console.WriteLine(update.Type);
@@ -155,7 +147,6 @@ async Task HandleUpdate(Update update)
         return;
     }
 
-    // 1) گرفتن فیلم از ادمین (فلوی قدیمی)
     if (message.Video != null && message.From!.Id == BotConfig.AdminId)
     {
         adminState = new AdminState { FileId = message.Video.FileId };
@@ -176,7 +167,6 @@ async Task HandleUpdate(Update update)
 
     if (text == null) return;
 
-    // 2) گرفتن اسم فیلم
     if (adminState != null && adminState.PhotoFileId != null && adminState.Title == null)
     {
         adminState.Title = text;
@@ -184,7 +174,6 @@ async Task HandleUpdate(Update update)
         return;
     }
 
-    // 3) گرفتن توضیحات + ذخیره
     if (adminState != null &&
         adminState.PhotoFileId != null &&
         adminState.Title != null &&
@@ -431,7 +420,6 @@ async Task HandleUpdate(Update update)
         return;
     }
 
-    // /start
     if (text == "/start")
     {
         var user = new TelegramMovieBot.Models.User
@@ -454,7 +442,6 @@ async Task HandleUpdate(Update update)
         return;
     }
 
-    // /start code (ارسال فیلم)
     if (text.StartsWith("/start "))
     {
         if (!await IsUserJoined(message.From!.Id))
@@ -500,7 +487,7 @@ async Task HandleUpdate(Update update)
             {
                 await botClient.DeleteMessage(chatId: message.Chat.Id, messageId: sentMessage.MessageId);
             }
-            catch { /* اگر حذف نشد، مهم نیست */ }
+            catch { }
         });
 
         return;
