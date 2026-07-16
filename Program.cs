@@ -281,7 +281,7 @@ async Task UpdateHandler(Update update)
         return;
     }
 
-    if (!text.StartsWith("/start"))
+    if (!text.StartsWith("/start") && isAdmin)
     {
         var movies = movieRepo.SearchByTitle(text);
 
@@ -641,6 +641,13 @@ async Task HandleCallbackQuery(CallbackQuery callbackQuery)
         }
 
         await botClient.AnswerCallbackQuery(callbackQuery.Id, "✅ عضویت تایید شد");
+
+        try
+        {
+            await botClient.DeleteMessage(chatId.Value, callbackQuery.Message!.MessageId);
+        }
+        catch { }
+
         await DeliverMovie(chatId.Value, code);
         return;
     }
