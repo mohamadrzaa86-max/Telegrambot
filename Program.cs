@@ -109,6 +109,7 @@ async Task UpdateHandler(Update update)
         return;
     }
 
+    // ===== رفع باگ ۱: نگه‌داشتن دکمه‌ی شیشه‌ای هنگام پیام همگانی =====
     if (isAdmin && adminState?.WaitingForBroadcast == true)
     {
         var users = userRepo.GetAllTelegramIds();
@@ -145,6 +146,7 @@ async Task UpdateHandler(Update update)
         return;
     }
 
+    // ===== فلوی افزودن کانال جدید =====
     if (isAdmin && adminState?.WaitingForChannelUsername == true && text != null)
     {
         var username = text.Trim();
@@ -236,6 +238,7 @@ async Task UpdateHandler(Update update)
         return;
     }
 
+    // ===== تغییر ۲: دیگه پست به‌صورت خودکار به کانال ارسال نمی‌شود؛ فقط برای خود ادمین =====
     if (isAdmin &&
         adminState != null &&
         adminState.PhotoFileId != null &&
@@ -320,6 +323,7 @@ async Task UpdateHandler(Update update)
         return;
     }
 
+    // ===== تغییر ۴: مدیریت کانال‌ها از داخل ربات =====
     if (text == "📡 مدیریت کانال‌ها" && isAdmin)
     {
         await ShowChannelManagement(message.Chat.Id);
@@ -398,4 +402,344 @@ async Task UpdateHandler(Update update)
         return;
     }
 
-    if (text == "🔥 پربازدیدترین فیلم‌ها" &&
+    if (text == "🔥 پربازدیدترین فیلم‌ها" && isAdmin)
+    {
+        var movies = movieRepo.GetTopMovies();
+
+        if (movies.Count == 0)
+        {
+            await botClient.SendMessage(message.Chat.Id, "هنوز هیچ فیلمی وجود ندارد.");
+            return;
+        }
+
+        string result = "🔥 ۱۰ فیلم پربازدید:\n\n";
+        foreach (var movie in movies)
+        {
+            result += $"🎬 {movie.Title}\n👁 {movie.Views} بازدید\n\n";
+        }
+
+        await botClient.SendMessage(message.Chat.Id, result);
+        return;
+    }
+
+    if (text == "📋 لیست فیلم‌ها" && isAdmin)
+    {
+        var movies = movieRepo.GetAll();
+
+        if (movies.Count == 0)
+        {
+            await botClient.SendMessage(message.Chat.Id, "هنوز هیچ فیلمی وجود ندارد.");
+            return;
+        }
+
+        const int chunkLimit = 3500;
+        var chunk = new StringBuilder($"📋 لیست فیلم‌ها ({movies.Count} مورد):\n\n");
+
+        foreach (var movie in movies)
+        {
+            var line = $"🎬 {movie.Title}\nکد: {movie.MovieCode}\n\n";
+
+            if (chunk.Length + line.Length > chunkLimit)
+            {
+                await botClient.SendMessage(message.Chat.Id, chunk.ToString());
+                chunk.Clear();
+            }
+
+            chunk.Append(line);
+        }
+
+        if (chunk.Length > 0)
+        {
+            await botClient.SendMessage(message.Chat.Id, chunk.ToString());
+        }
+
+        return;
+    }
+
+    if (text == "/start")
+    {
+        var user = new TelegramMovieBot.Models.User
+        {
+            TelegramId = message.From!.Id,
+            Username = message.From.Username,
+            FirstName = message.From.FirstName
+        };
+
+        if (!userRepo.Exists(user.TelegramId))
+        {
+            userRepo.AddUser(user);
+            await botClient.SendMessage(chatId: message.Chat.Id, text: "🎬 خوش اومدی! ربات فعال شد");
+        }
+        else
+        {
+            await botClient.SendMessage(chatId: message.Chat.Id, text: "👋 خوش برگشتی!");
+        }
+
+        return;
+    }
+
+    // ===== تغییر ۴: چک عضویت روی لیست داینامیک کانال‌ها =====
+    if (text.StartsWith("/start "))
+    {
+        var code = text.Replace("/start ", "").Trim();
+        var notJoined = await GetNotJoinedChannels(message.From!.Id);
+
+        if (notJoined.Count > 0)
+        {
+            await SendJoinPrompt(message.Chat.Id, code, notJoined);
+            return;
+        }
+
+        await DeliverMovie(message.Chat.Id, code);
+        return;
+    }
+}
+
+// =======================
+// نمایش پنل مدیریت کانال‌ها
+// =======================
+async Task ShowChannelManagement(long chatId)
+{
+    var channels = channelRepo.GetAll();
+    var rows = new List<InlineKeyboardButton[]>();
+
+    foreach (var channel in channels)
+    {
+        rows.Add(new[]
+        {
+            InlineKeyboardButton.WithCallbackData($"❌ {channel.Username}", "delchannel_" + channel.Id)
+        });
+    }
+
+    rows.Add(new[] { InlineKeyboardButton.WithCallbackData("➕ افزودن کانال", "addchannel") });
+
+    var text = channels.Count == 0
+        ? "هیچ کانالی برای عضویت اجباری تنظیم نشده.\nبرای افزودن، دکمه‌ی زیر را بزنید."
+        : "📡 کانال‌های موردنیاز برای عضویت:\n(برای حذف، روی کانال بزنید)";
+
+    await botClient.SendMessage(chatId, text, replyMarkup: new InlineKeyboardMarkup(rows));
+}
+
+// =======================
+// چک عضویت در همه‌ی کانال‌های ثبت‌شده
+// =======================
+async Task<List<string>> GetNotJoinedChannels(long userId)
+{
+    var notJoined = new List<string>();
+    var channels = channelRepo.GetAll();
+
+    foreach (var channel in channels)
+    {
+        try
+        {
+            var member = await botClient.GetChatMember(channel.Username, userId);
+            bool joined = member.Status == ChatMemberStatus.Member
+                || member.Status == ChatMemberStatus.Administrator
+                || member.Status == ChatMemberStatus.Creator;
+
+            if (!joined)
+                notJoined.Add(channel.Username);
+        }
+        catch
+        {
+            notJoined.Add(channel.Username);
+        }
+    }
+
+    return notJoined;
+}
+
+async Task SendJoinPrompt(long chatId, string code, List<string> notJoinedChannels)
+{
+    var rows = new List<InlineKeyboardButton[]>();
+
+    foreach (var ch in notJoinedChannels)
+    {
+        rows.Add(new[]
+        {
+            InlineKeyboardButton.WithUrl($"📢 عضویت در {ch}", $"https://t.me/{(ch.StartsWith("@") ? ch.Substring(1) : ch)}")
+        });
+    }
+
+    rows.Add(new[] { InlineKeyboardButton.WithCallbackData("✅ عضو شدم", "check_join_" + code) });
+
+    await botClient.SendMessage(
+        chatId: chatId,
+        text: "❌ برای دریافت فیلم، ابتدا در کانال‌های زیر عضو شوید:",
+        replyMarkup: new InlineKeyboardMarkup(rows));
+}
+
+// =======================
+// ارسال فیلم + پیام «دریافت مجدد» (تغییر ۳)
+// =======================
+async Task<bool> DeliverMovie(long chatId, string code)
+{
+    var movie = movieRepo.GetByCode(code);
+
+    if (movie == null)
+    {
+        await botClient.SendMessage(chatId, "❌ فیلم پیدا نشد");
+        return false;
+    }
+
+    var sentMessage = await botClient.SendVideo(
+        chatId: chatId,
+        video: movie.FileId,
+        caption: $"{movie.Title}\n\n{movie.Description}\n\n👁 تعداد بازدید: {movie.Views}"
+    );
+
+    movieRepo.AddView(movie.MovieCode);
+
+    var resendKeyboard = new InlineKeyboardMarkup(new[]
+    {
+        new[] { InlineKeyboardButton.WithCallbackData("🔁 دریافت مجدد", "resend_" + movie.MovieCode) }
+    });
+
+    await botClient.SendMessage(
+        chatId: chatId,
+        text: "⏳ کاربر عزیز، این فیلم بعد از ۳۰ ثانیه پاک می‌شود.\nاین فیلم را در Saved Messages ذخیره کنید.",
+        replyMarkup: resendKeyboard
+    );
+
+    _ = Task.Run(async () =>
+    {
+        await Task.Delay(30000);
+        try
+        {
+            await botClient.DeleteMessage(chatId, sentMessage.MessageId);
+        }
+        catch { }
+    });
+
+    return true;
+}
+
+async Task HandleCallbackQuery(CallbackQuery callbackQuery)
+{
+    var data = callbackQuery.Data;
+    var chatId = callbackQuery.Message?.Chat.Id;
+
+    if (data == null || chatId == null)
+    {
+        await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        return;
+    }
+
+    var userId = callbackQuery.From.Id;
+    var isAdmin = userId == BotConfig.AdminId;
+    adminStates.TryGetValue(userId, out var adminState);
+
+    if (data.StartsWith("check_join_"))
+    {
+        var code = data.Replace("check_join_", "");
+        var notJoined = await GetNotJoinedChannels(userId);
+
+        if (notJoined.Count > 0)
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id, "❌ هنوز عضو همه‌ی کانال‌ها نشدی!", showAlert: true);
+            return;
+        }
+
+        await botClient.AnswerCallbackQuery(callbackQuery.Id, "✅ عضویت تایید شد");
+        await DeliverMovie(chatId.Value, code);
+        return;
+    }
+
+    if (data.StartsWith("resend_"))
+    {
+        var code = data.Replace("resend_", "");
+        await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        await DeliverMovie(chatId.Value, code);
+        return;
+    }
+
+    if (data == "addchannel")
+    {
+        if (!isAdmin)
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id);
+            return;
+        }
+
+        adminStates[userId] = new AdminState { WaitingForChannelUsername = true };
+
+        await botClient.SendMessage(chatId.Value, "🆔 آیدی کانال را با @ ارسال کنید (مثال: @mychannel)\n\n⚠️ ربات باید ادمین همان کانال باشد وگرنه نمی‌تواند عضویت را چک کند.");
+        await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        return;
+    }
+
+    if (data.StartsWith("delchannel_"))
+    {
+        if (!isAdmin)
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id);
+            return;
+        }
+
+        if (int.TryParse(data.Replace("delchannel_", ""), out var channelId))
+        {
+            channelRepo.Delete(channelId);
+            await botClient.AnswerCallbackQuery(callbackQuery.Id, "✅ حذف شد");
+            await ShowChannelManagement(chatId.Value);
+        }
+        else
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        }
+
+        return;
+    }
+
+    if (data.StartsWith("edit_"))
+    {
+        if (!isAdmin || adminState?.EditingMovie == null)
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id);
+            return;
+        }
+
+        switch (data)
+        {
+            case "edit_title":
+                adminState.Mode = "title";
+                await botClient.SendMessage(chatId.Value, "📝 عنوان جدید را ارسال کنید:");
+                break;
+
+            case "edit_desc":
+                adminState.Mode = "desc";
+                await botClient.SendMessage(chatId.Value, "📄 توضیحات جدید را ارسال کنید:");
+                break;
+
+            case "edit_photo":
+                adminState.Mode = "photo";
+                await botClient.SendMessage(chatId.Value, "🖼 کاور جدید را ارسال کنید:");
+                break;
+
+            case "edit_video":
+                adminState.Mode = "video";
+                await botClient.SendMessage(chatId.Value, "🎥 فیلم جدید را ارسال کنید:");
+                break;
+        }
+
+        await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        return;
+    }
+
+    if (data.StartsWith("movie_"))
+    {
+        var code = data.Replace("movie_", "");
+        var movie = movieRepo.GetByCode(code);
+
+        if (movie == null)
+        {
+            await botClient.AnswerCallbackQuery(callbackQuery.Id, "فیلم پیدا نشد");
+            return;
+        }
+
+        await botClient.AnswerCallbackQuery(callbackQuery.Id);
+        await DeliverMovie(chatId.Value, movie.MovieCode);
+        return;
+    }
+
+    await botClient.AnswerCallbackQuery(callbackQuery.Id);
+}
