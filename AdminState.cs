@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -23,5 +23,6 @@ namespace TelegramMovieBot.Models
         public bool WaitingForMovie { get; set; }
         public bool WaitingForTitle { get; set; }
         public bool WaitingForDescription { get; set; }
+        public bool WaitingForChannelUsername { get; set; }
     }
 }
